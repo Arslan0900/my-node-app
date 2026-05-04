@@ -1,0 +1,106 @@
+-> For the ingress first we install the AWS Load Balancer Controller and for that we have to create IAM Policy and a IAM Service account and creating a OIDC for kubernates and IAM communication and then install the Helm and add its helm chart repo and with the help of helm install the AWS loadbalancer controller  and then we use ingress for controlling the route with one endpoint 
+
+First create IAM policy with this command first download the policy json and the create with the aws-cli command:
+
+curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam_policy.json
+
+After creating a policy we need a OIDC for creating a IAM service account 
+
+What is OIDC (Simple Explanation) 
+
+OIDC = a bridge between:
+
+Kubernetes Service Account and AWS IAM Role
+
+use this command to create this oidc for kubernates command needs your eks cluster name and region
+
+  eksctl utils associate-iam-oidc-provider \
+  --region us-east-1 \
+  --cluster my-eks-cluster \
+  --approve
+
+after that create a IAM account with this command its required your eks cluster name ,namespace , account id like that "406193642614" and region :
+
+eksctl create iamserviceaccount \
+  --cluster my-eks-cluster \
+  --namespace kube-system \
+  --name aws-load-balancer-controller \
+  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy \
+  --approve \
+  --region us-east-1
+
+after creating this installing helm in ubuntu and install the ALB controller into aws :
+
+there are two ways to install the helm 
+1. curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+2. sudo snap install helm --classic
+check its version to verifying its installed 
+	"helm version"
+after that add the helm chart git repo by this command 
+ 	"helm repo update"
+after that Install AWS Load Balancer Controller for ingress by this command :
+
+  helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=my-eks-cluster \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+
+after that to verifying its install correctly this use this command to check this 
+
+	kubectl get pods -n kube-system
+
+its show just like that "aws-load-balancer-controller-xxxxx   Running" if its running then its setup correctly .
+
+ingress.yaml file :
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
+
+kubectl apply -f ingress.yaml
+
+now your ingress working correctly .
+
+and if you want to delete all these recourses then use these command to do that :
+
+kubectl delete deployment frontend
+kubectl delete deployment backend
+kubectl delete service frontend-service
+kubectl delete service backend-service
+kubectl delete ingress app-ingress
+
+helm list -n kube-system
+helm uninstall aws-load-balancer-controller -n kube-system
+
+eksctl delete iamserviceaccount \
+  --cluster my-eks-cluster \
+  --namespace kube-system \
+  --name aws-load-balancer-controller
+
+Optional:
+ eksctl utils disassociate-iam-oidc-provider \
+  --cluster my-eks-cluster \
+  --region us-east-1
+
+eksctl delete cluster --name my-eks-cluster --region us-east-1
